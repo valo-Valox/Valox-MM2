@@ -1,8 +1,4 @@
--- MM2 Cheat Hub - Fixed ESP for Round End and Toggle by Grok (xAI)
--- Features: ESP (Fixed Sheriff Color, Persistent Across Rounds), Stab & Loop Bring (G Key, Murderer Only), Shoot Murderer (F Key)
--- Fixes: ESP persists after round end, toggle works, Stab only for murderer, CanCollide handling, No routine console prints
--- Compatibility: JJSploit v8.16.5, Windows, mobile-friendly
--- Date: September 30, 2025
+-- ALL credits to Valox Creations (Me).
 
 -- ======= Services =======
 local Players = game:GetService("Players")
