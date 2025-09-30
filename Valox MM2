@@ -1,0 +1,691 @@
+-- MM2 Cheat Hub - Your Original Script with Role Detection Fix by Grok (xAI)
+-- Features: ESP (Original, Fixed Sheriff Color via GetCurrentPlayerData), Stab & Loop Bring (G Key, Continuous TP), Shoot Murderer (F Key, Fixed)
+-- Fixes: Sheriff ESP color (green to blue), Match status flags (matchStarted/matchEnded)
+-- Compatibility: JJSploit v8.16.5, Windows, mobile-friendly
+-- Date: September 30, 2025
+
+-- ======= Services =======
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local localPlayer = Players.LocalPlayer
+
+-- ======= Notification Helper =======
+local function notify(title, text, duration)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {Title = title, Text = text, Duration = duration or 5})
+    end)
+end
+
+-- ======= Cleanup Previous Runs =======
+if getgenv().Connections then
+    for _, c in pairs(getgenv().Connections) do
+        pcall(function() c:Disconnect() end)
+    end
+end
+getgenv().Connections = {}
+getgenv().matchStarted = false
+getgenv().matchEnded = false
+getgenv().hasPrintedNoRoles = false
+getgenv().hasPrintedRoles = false
+
+-- ======= Defaults =======
+getgenv().StabSettings = getgenv().StabSettings or {
+    Enabled = false,
+    Key = Enum.KeyCode.G,
+    LoopBringActive = false,
+    TargetCFrame = nil,
+    OriginalPositions = {},
+    OriginalCanCollide = {},
+    Duration = 3
+}
+getgenv().ShootSettings = getgenv().ShootSettings or {
+    Enabled = false,
+    Key = Enum.KeyCode.F
+}
+getgenv().ESPSettings = {
+    Enabled = false,
+    Highlights = {},
+    NameTags = {}
+}
+getgenv().playerData = {} -- { [playerName] = { role = "Murderer"/"Sheriff"/"Innocent"/"Unknown", position = Vector3, torsoCenter = Vector3 } }
+local LOOP_BRING_DISTANCE = 1
+local ROLE_CHECK_INTERVAL = 0.5 -- From provided script
+
+-- ======= Load Rayfield (Original Method) =======
+getgenv().SecureMode = true
+local success, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
+end)
+if not success or not Rayfield or type(Rayfield.CreateWindow) ~= "function" then
+    notify("Error", "Failed to load Rayfield: " .. tostring(Rayfield) .. ". Check network or try Kavo UI.", 10)
+    print("Rayfield Load Failed:", tostring(Rayfield))
+    return
+end
+notify("Success", "Rayfield library loaded successfully!", 5)
+getgenv().Rayfield = Rayfield
+
+-- ======= Rayfield GUI Setup =======
+local Window = Rayfield:CreateWindow({
+    Name = "MM2 Cheat Hub",
+    LoadingTitle = "Murder Mystery 2 Cheats",
+    LoadingSubtitle = "by xAI",
+    ConfigurationSaving = { Enabled = false },
+    KeySystem = false
+})
+
+local MainTab = Window:CreateTab("Main", nil)
+
+MainTab:CreateToggle({
+    Name = "Stab & Loop Bring",
+    CurrentValue = getgenv().StabSettings.Enabled,
+    Callback = function(Value)
+        local success, err = pcall(function()
+            getgenv().StabSettings.Enabled = Value
+            if not Value then
+                getgenv().StabSettings.LoopBringActive = false
+                revertPlayers("StabSettings")
+            end
+            notify("Cheat Hub", "Stab & Loop Bring " .. (Value and "enabled (G Key)" or "disabled") .. ".", 3)
+        end)
+        if not success then
+            notify("Error", "Stab toggle failed: " .. tostring(err), 5)
+            print("Stab Toggle Error:", tostring(err))
+        end
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "Loop Bring Duration (seconds)",
+    Range = {1, 10},
+    Increment = 1,
+    CurrentValue = getgenv().StabSettings.Duration,
+    Callback = function(Value)
+        local success, err = pcall(function()
+            getgenv().StabSettings.Duration = Value
+            notify("Cheat Hub", "Loop Bring duration set to " .. Value .. "s", 3)
+        end)
+        if not success then
+            notify("Error", "Duration slider failed: " .. tostring(err), 5)
+            print("Duration Slider Error:", tostring(err))
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Shoot Murderer",
+    CurrentValue = getgenv().ShootSettings.Enabled,
+    Callback = function(Value)
+        local success, err = pcall(function()
+            getgenv().ShootSettings.Enabled = Value
+            notify("Cheat Hub", "Shoot Murderer " .. (Value and "enabled (F Key)" or "disabled") .. ".", 3)
+        end)
+        if not success then
+            notify("Error", "Shoot toggle failed: " .. tostring(err), 5)
+            print("Shoot Toggle Error:", tostring(err))
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "ESP (Filled, 75% Transparent)",
+    CurrentValue = getgenv().ESPSettings.Enabled,
+    Callback = function(Value)
+        local success, err = pcall(function()
+            getgenv().ESPSettings.Enabled = Value
+            if not Value then
+                clearESP()
+            else
+                setupESP()
+            end
+            notify("Cheat Hub", "ESP " .. (Value and "enabled" or "disabled") .. ".", 3)
+        end)
+        if not success then
+            notify("Error", "ESP toggle failed: " .. tostring(err), 5)
+            print("ESP Toggle Error:", tostring(err))
+        end
+    end
+})
+
+MainTab:CreateLabel("Keybinds: G (Toggle Stab & Loop Bring), F (Shoot Murderer)")
+MainTab:CreateLabel("ESP Colors: Red (Murderer), Blue (Sheriff), Green (Innocent), White (Other)")
+
+-- ======= Helpers =======
+local function UnloadAll()
+    local success, err = pcall(function()
+        for _, conn in pairs(getgenv().Connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        getgenv().Connections = {}
+        clearESP()
+        getgenv().StabSettings.LoopBringActive = false
+        revertPlayers("StabSettings")
+        pcall(function() Rayfield:Destroy() end)
+        getgenv().Rayfield = nil
+        getgenv().StabSettings = nil
+        getgenv().ShootSettings = nil
+        getgenv().ESPSettings = nil
+        getgenv().playerData = nil
+        getgenv().matchStarted = nil
+        getgenv().matchEnded = nil
+        notify("Cheat Hub", "Script unloaded and cleaned up", 5)
+    end)
+    if not success then
+        notify("Error", "Failed to unload script: " .. tostring(err), 5)
+        print("Unload Error:", tostring(err))
+    end
+end
+
+local function equipTool(toolName)
+    local success, result = pcall(function()
+        local tool = localPlayer.Backpack:FindFirstChild(toolName) or localPlayer.Character:FindFirstChild(toolName) or getNil(toolName, "Tool")
+        if tool and tool:IsA("Tool") then
+            localPlayer.Character.Humanoid:EquipTool(tool)
+            notify("Tools", "Equipped " .. toolName, 2)
+            return tool
+        else
+            local fallback = localPlayer.Backpack:GetChildren()[1] or localPlayer.Character:GetChildren()[1]
+            if fallback and fallback:IsA("Tool") then
+                localPlayer.Character.Humanoid:EquipTool(fallback)
+                notify("Tools", "Equipped fallback tool: " .. fallback.Name, 2)
+                return fallback
+            end
+            notify("Error", toolName .. " not found in inventory.", 5)
+            return nil
+        end
+    end)
+    if not success then
+        notify("Error", "Failed to equip " .. toolName .. ": " .. tostring(result), 5)
+        print("Equip Tool Error:", tostring(result))
+        return nil
+    end
+    return result
+end
+
+function getNil(name, class)
+    for _, v in next, getnilinstances() do
+        if v.ClassName == class and v.Name == name then
+            return v
+        end
+    end
+end
+
+-- ======= Role Detection (From Provided Script) =======
+local success, GetCurrentPlayerData = pcall(function()
+    return ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("GetCurrentPlayerData")
+end)
+if not success then
+    notify("Error", "Failed to find GetCurrentPlayerData: " .. tostring(GetCurrentPlayerData), 10)
+    print("Role Detection Setup Error:", tostring(GetCurrentPlayerData))
+    return
+end
+
+local invokeFunction
+local success, CurrentRoundClient = pcall(function()
+    return ReplicatedStorage:WaitForChild("Modules"):WaitForChild("CurrentRoundClient")
+end)
+if success and CurrentRoundClient then
+    local success, module = pcall(function()
+        return require(CurrentRoundClient).GetLatestPlayerData
+    end)
+    invokeFunction = success and module or function()
+        warn("Failed to load CurrentRoundClient.GetLatestPlayerData")
+        return nil
+    end
+else
+    invokeFunction = function()
+        local success, result = pcall(function()
+            return GetCurrentPlayerData:InvokeServer()
+        end)
+        if success then
+            return result
+        else
+            warn("Invoke failed: " .. tostring(result))
+            return nil
+        end
+    end
+end
+
+local function updatePlayerData()
+    local success, data = pcall(invokeFunction)
+    if success and data and not data.error then
+        for _, player in ipairs(Players:GetPlayers()) do
+            local roleData = data[player.Name]
+            local character = player.Character
+            local position = character and character:GetPrimaryPartCFrame().Position or Vector3.new(0, 0, 0)
+            local torsoCenter = character and character:FindFirstChild("HumanoidRootPart") and character.HumanoidRootPart.Position or position
+            getgenv().playerData[player.Name] = {
+                role = roleData and roleData.Role or "Unknown",
+                position = position,
+                torsoCenter = torsoCenter
+            }
+        end
+        return true
+    else
+        warn("No roles leaked: " .. tostring(data and data.error or "RemoteFunction failed"))
+        return false
+    end
+end
+
+local function printRoles()
+    local murderer, sheriff, innocents = "", "", {}
+    for playerName, data in pairs(getgenv().playerData) do
+        if data.role == "Murderer" then
+            murderer = playerName
+        elseif data.role == "Sheriff" then
+            sheriff = playerName
+        elseif data.role == "Innocent" then
+            table.insert(innocents, playerName)
+        end
+    end
+    local innocentList = table.concat(innocents, ",")
+    local roleString = string.format("🔴 murd: %s 🟡 sheriff: %s 🟢 innocent: %s", murderer or "None", sheriff or "None", innocentList ~= "" and innocentList or "None")
+    print(roleString)
+    
+    -- Set match status flags
+    if (murderer ~= "" or sheriff ~= "" or #innocents > 0) and not getgenv().hasPrintedRoles then
+        getgenv().matchStarted = true
+        getgenv().hasPrintedRoles = true
+        getgenv().hasPrintedNoRoles = false
+        notify("Match Status", "Match started! Roles detected.", 3)
+    elseif murderer == "" and sheriff == "" and #innocents == 0 and not getgenv().hasPrintedNoRoles then
+        getgenv().matchEnded = true
+        getgenv().hasPrintedNoRoles = true
+        getgenv().hasPrintedRoles = false
+        notify("Match Status", "Match ended! No roles detected.", 3)
+    end
+end
+
+-- Continuous role update loop
+local roleConn
+local success, err = pcall(function()
+    roleConn = RunService.Heartbeat:Connect(function()
+        local timestamp = os.date("%H:%M:%S") .. string.format(".%03d", math.floor((tick() % 1) * 1000))
+        print("Client (" .. localPlayer.Name .. "): Role check at " .. timestamp .. "...")
+        if updatePlayerData() then
+            printRoles()
+        end
+    end)
+end)
+if success then
+    table.insert(getgenv().Connections, roleConn)
+else
+    notify("Error", "Failed to start role detection loop: " .. tostring(err), 10)
+    print("Role Loop Setup Error:", tostring(err))
+end
+
+-- ======= Sheriff Color Fix in findMurdererAndSheriff =======
+local function findMurdererAndSheriff()
+    local success, result = pcall(function()
+        local murderer, sheriff
+        for playerName, data in pairs(getgenv().playerData) do
+            local player = Players:FindFirstChild(playerName)
+            if player and player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                if data.role == "Murderer" then
+                    murderer = player
+                elseif data.role == "Sheriff" then
+                    sheriff = player
+                end
+            end
+        end
+        return murderer, sheriff
+    end)
+    if not success then
+        notify("Error", "Failed to find murderer or sheriff: " .. tostring(result), 5)
+        print("Role Detection Error:", tostring(result))
+        return nil, nil
+    end
+    return result
+end
+
+-- ======= Shoot Murderer (Fixed) =======
+local function shootGun()
+    local success, err = pcall(function()
+        if not getgenv().ShootSettings.Enabled then
+            notify("Shoot", "Cannot shoot: Shoot Murderer not enabled", 3)
+            return
+        end
+        local tool = equipTool("Gun") or equipTool("KnifeLocal")
+        if not tool then
+            notify("Error", "Cannot shoot: Gun or KnifeLocal not equipped", 5)
+            return
+        end
+        local murderer, _ = findMurdererAndSheriff()
+        if not murderer or not murderer.Character or not murderer.Character:FindFirstChild("HumanoidRootPart") then
+            notify("Error", "Cannot shoot: No murderer found or invalid", 5)
+            return
+        end
+        local targetPos = murderer.Character.HumanoidRootPart.Position
+        local targetVector = Vector3.new(targetPos.X, targetPos.Y, targetPos.Z)
+        local createBeam = tool:FindFirstChild("KnifeLocal", true) and tool:FindFirstChild("KnifeLocal"):FindFirstChild("CreateBeam", true) and tool:FindFirstChild("KnifeLocal"):FindFirstChild("CreateBeam"):FindFirstChild("RemoteFunction", true)
+        if createBeam then
+            local invokeSuccess, result = pcall(function()
+                createBeam:InvokeServer(1, targetVector, "AH2")
+            end)
+            if invokeSuccess then
+                notify("Shoot", "Shot fired at " .. murderer.Name .. " at " .. tostring(targetVector), 3)
+            else
+                notify("Error", "Failed to invoke CreateBeam remote: " .. tostring(result), 5)
+                print("Shoot Invoke Error:", tostring(result))
+            end
+        else
+            notify("Error", "CreateBeam RemoteFunction not found in " .. tool.Name, 5)
+            print("Shoot Error: CreateBeam RemoteFunction not found")
+        end
+    end)
+    if not success then
+        notify("Error", "Shoot failed: " .. tostring(err), 5)
+        print("Shoot Error:", tostring(err))
+    end
+end
+
+-- ======= Stab Knife =======
+local function stabKnife()
+    local success, err = pcall(function()
+        if not getgenv().StabSettings.Enabled then return end
+        local tool = equipTool("Knife")
+        if not tool then
+            notify("Error", "Cannot stab: Knife not equipped", 5)
+            return
+        end
+        local stabRemote = tool:WaitForChild("Stab", 2)
+        if stabRemote then
+            local fireSuccess, result = pcall(function()
+                stabRemote:FireServer({"Down"})
+            end)
+            if fireSuccess then
+                notify("Stab", "Knife stabbed!", 2)
+            else
+                notify("Error", "Failed to fire Stab remote: " .. tostring(result), 5)
+                print("Stab Error:", tostring(result))
+            end
+        else
+            notify("Error", "Stab remote not found", 5)
+        end
+    end)
+    if not success then
+        notify("Error", "Stab failed: " .. tostring(err), 5)
+        print("Stab Error:", tostring(err))
+    end
+end
+
+-- ======= Continuous Loop Bring =======
+local bringConnection
+local function startContinuousLoopBring()
+    local success, err = pcall(function()
+        if getgenv().StabSettings.LoopBringActive then
+            getgenv().StabSettings.LoopBringActive = false
+            if bringConnection then
+                pcall(function() bringConnection:Disconnect() end)
+                bringConnection = nil
+            end
+            revertPlayers("StabSettings")
+            notify("Loop Bring", "Continuous Loop Bring disabled", 3)
+            return
+        end
+        if not getgenv().StabSettings.Enabled then
+            notify("Loop Bring", "Cannot start: Stab & Loop Bring not enabled", 3)
+            return
+        end
+        getgenv().StabSettings.LoopBringActive = true
+        getgenv().StabSettings.OriginalPositions = {}
+        getgenv().StabSettings.OriginalCanCollide = {}
+        notify("Loop Bring", "Continuous Loop Bring enabled for " .. getgenv().StabSettings.Duration .. "s", 3)
+
+        -- Store original positions and CanCollide
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                getgenv().StabSettings.OriginalPositions[player.Name] = player.Character.HumanoidRootPart.CFrame
+                getgenv().StabSettings.OriginalCanCollide[player.Name] = {}
+                for _, part in pairs(player.Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        getgenv().StabSettings.OriginalCanCollide[player.Name][part.Name] = part.CanCollide
+                    end
+                end
+            end
+        end
+
+        -- Continuous update
+        local startTime = tick()
+        bringConnection = RunService.Heartbeat:Connect(function()
+            if not getgenv().StabSettings.LoopBringActive or (tick() - startTime >= getgenv().StabSettings.Duration) then
+                getgenv().StabSettings.LoopBringActive = false
+                if bringConnection then
+                    bringConnection:Disconnect()
+                    bringConnection = nil
+                end
+                revertPlayers("StabSettings")
+                notify("Loop Bring", "Continuous Loop Bring ended", 3)
+                return
+            end
+            local loopSuccess, loopErr = pcall(function()
+                local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    getgenv().StabSettings.TargetCFrame = root.CFrame * CFrame.new(0, 0, -LOOP_BRING_DISTANCE)
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                            player.Character.HumanoidRootPart.CFrame = getgenv().StabSettings.TargetCFrame
+                            for _, part in pairs(player.Character:GetChildren()) do
+                                if part:IsA("BasePart") then
+                                    part.CanCollide = false
+                                end
+                            end
+                        end
+                    end
+                    stabKnife()
+                end
+            end)
+            if not loopSuccess then
+                notify("Error", "Loop Bring failed: " .. tostring(loopErr), 5)
+                print("Loop Bring Error:", tostring(loopErr))
+                getgenv().StabSettings.LoopBringActive = false
+                if bringConnection then
+                    bringConnection:Disconnect()
+                    bringConnection = nil
+                end
+                revertPlayers("StabSettings")
+            end
+        end)
+        table.insert(getgenv().Connections, bringConnection)
+    end)
+    if not success then
+        notify("Error", "Failed to start Loop Bring: " .. tostring(err), 5)
+        print("Loop Bring Start Error:", tostring(err))
+        getgenv().StabSettings.LoopBringActive = false
+        revertPlayers("StabSettings")
+    end
+end
+
+local function revertPlayers(settingsKey)
+    local success, err = pcall(function()
+        local settings = getgenv()[settingsKey]
+        for playerName, originalCFrame in pairs(settings.OriginalPositions) do
+            local player = Players:FindFirstChild(playerName)
+            if player and player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                player.Character.HumanoidRootPart.CFrame = originalCFrame
+                local originalCanCollide = settings.OriginalCanCollide[playerName]
+                if originalCanCollide then
+                    for _, part in pairs(player.Character:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = originalCanCollide[part.Name] or true
+                        end
+                    end
+                end
+            end
+        end
+        settings.OriginalPositions = {}
+        settings.OriginalCanCollide = {}
+        notify("Cheat Hub", "Players reverted to original positions and collision states.", 3)
+    end)
+    if not success then
+        notify("Error", "Failed to revert players: " .. tostring(err), 5)
+        print("Revert Players Error:", tostring(err))
+    end
+end
+
+-- ======= ESP Functions (Your Original Logic) =======
+local function createESP(player)
+    if player == localPlayer then return end
+    local success, err = pcall(function()
+        local character = player.Character
+        if not character or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Head") then
+            notify("ESP", "Skipped ESP for " .. player.Name .. ": Invalid character or Head", 3)
+            return
+        end
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "ESPHighlight"
+        highlight.FillTransparency = 0.75
+        highlight.OutlineTransparency = 0
+        highlight.FillColor = Color3.fromRGB(255, 255, 255)
+        highlight.Parent = character
+        getgenv().ESPSettings.Highlights[player] = highlight
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "ESPNameTag"
+        billboard.Size = UDim2.new(0, 100, 0, 20)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Adornee = character:FindFirstChild("Head")
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Size = UDim2.new(1, 0, 1, 0)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = player.Name
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nameLabel.TextSize = 14
+        nameLabel.TextStrokeTransparency = 0
+        nameLabel.Parent = billboard
+        billboard.Parent = character
+        getgenv().ESPSettings.NameTags[player] = billboard
+        notify("ESP", "Created for " .. player.Name, 2)
+    end)
+    if not success then
+        notify("Error", "Failed to create ESP for " .. player.Name .. ": " .. tostring(err), 5)
+        print("ESP Creation Error for " .. player.Name .. ":", tostring(err))
+    end
+end
+
+local function updateESP()
+    local success, err = pcall(function()
+        local murderer, sheriff = findMurdererAndSheriff()
+        for player, highlight in pairs(getgenv().ESPSettings.Highlights) do
+            local nameTag = getgenv().ESPSettings.NameTags[player]
+            if not getgenv().ESPSettings.Enabled or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") or not player.Character:FindFirstChild("Head") then
+                highlight.Enabled = false
+                if nameTag then nameTag.Enabled = false end
+            else
+                highlight.Enabled = true
+                local color
+                local role = getgenv().playerData[player.Name] and getgenv().playerData[player.Name].role or "Unknown"
+                if role == "Murderer" then
+                    color = Color3.fromRGB(255, 0, 0) -- Red for Murderer
+                elseif role == "Sheriff" then
+                    color = Color3.fromRGB(0, 0, 255) -- Blue for Sheriff
+                elseif role == "Innocent" then
+                    color = Color3.fromRGB(0, 255, 0) -- Green for Innocent
+                else
+                    color = Color3.fromRGB(255, 255, 255) -- White for Other
+                end
+                highlight.FillColor = color
+                if nameTag then
+                    nameTag.Enabled = true
+                    nameTag.Adornee = player.Character:FindFirstChild("Head")
+                    nameTag.TextLabel.TextColor3 = color
+                end
+            end
+        end
+    end)
+    if not success then
+        notify("Error", "ESP update failed: " .. tostring(err), 5)
+        print("ESP Update Error:", tostring(err))
+    end
+end
+
+local function clearESP()
+    local success, err = pcall(function()
+        for player, highlight in pairs(getgenv().ESPSettings.Highlights) do
+            pcall(function() highlight:Destroy() end)
+            getgenv().ESPSettings.Highlights[player] = nil
+        end
+        for player, nameTag in pairs(getgenv().ESPSettings.NameTags) do
+            pcall(function() nameTag:Destroy() end)
+            getgenv().ESPSettings.NameTags[player] = nil
+        end
+        notify("ESP", "Cleared all highlights and name tags", 3)
+    end)
+    if not success then
+        notify("Error", "Failed to clear ESP: " .. tostring(err), 5)
+        print("ESP Clear Error:", tostring(err))
+    end
+end
+
+local function setupESP()
+    local success, err = pcall(function()
+        for _, player in pairs(Players:GetPlayers()) do
+            createESP(player)
+        end
+        local playerAddedConn = Players.PlayerAdded:Connect(function(player)
+            if player ~= localPlayer then
+                createESP(player)
+            end
+        end)
+        local playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
+            if getgenv().ESPSettings.Highlights[player] then
+                pcall(function() getgenv().ESPSettings.Highlights[player]:Destroy() end)
+                getgenv().ESPSettings.Highlights[player] = nil
+            end
+            if getgenv().ESPSettings.NameTags[player] then
+                pcall(function() getgenv().ESPSettings.NameTags[player]:Destroy() end)
+                getgenv().ESPSettings.NameTags[player] = nil
+            end
+        end)
+        table.insert(getgenv().Connections, playerAddedConn)
+        table.insert(getgenv().Connections, playerRemovingConn)
+        local espConn = RunService.RenderStepped:Connect(updateESP)
+        table.insert(getgenv().Connections, espConn)
+        notify("ESP", "Setup completed", 3)
+    end)
+    if not success then
+        notify("Error", "Failed to setup ESP: " .. tostring(err), 5)
+        print("ESP Setup Error:", tostring(err))
+    end
+end
+
+-- ======= Keybind Listener =======
+local success, keybindConn = pcall(function()
+    return UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed then
+            local success, err = pcall(function()
+                if input.KeyCode == getgenv().StabSettings.Key and getgenv().StabSettings.Enabled then
+                    stabKnife()
+                    startContinuousLoopBring()
+                elseif input.KeyCode == getgenv().ShootSettings.Key and getgenv().ShootSettings.Enabled then
+                    shootGun()
+                end
+            end)
+            if not success then
+                notify("Error", "Input handling failed: " .. tostring(err), 5)
+                print("Input Error:", tostring(err))
+            end
+        end
+    end)
+end)
+if success then
+    table.insert(getgenv().Connections, keybindConn)
+else
+    notify("Error", "Failed to set up keybinds: " .. tostring(keybindConn), 5)
+    print("Keybind Setup Error:", tostring(keybindConn))
+end
+
+-- ======= Cleanup on Player Leave =======
+Players.PlayerRemoving:Connect(function(player)
+    if player == localPlayer then
+        UnloadAll()
+    end
+end)
+
+-- ======= Initial Setup =======
+setupESP()
+notify("Cheat Hub", "Loaded! Keybinds: G (Toggle Stab & Loop Bring), F (Shoot Murderer). ESP Colors: Red=Murderer, Blue=Sheriff, Green=Innocent.", 10)
+getgenv().ScriptLoaded = true
