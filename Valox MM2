@@ -1,13 +1,10 @@
--- Valox MM2 ESP & KillAll vFinal with dynamic role updates
-
+-- Valox MM2 ESP + KillAll + GunBeam
 if getgenv().ValoxMM2ESP then
     getgenv().ValoxMM2ESP:Destroy()
 end
 
 local ValoxESP = {}
 getgenv().ValoxMM2ESP = ValoxESP
-ValoxESP.Boxes = {}
-ValoxESP.Names = {}
 
 -- Services
 local Players = game:GetService("Players")
@@ -15,56 +12,55 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 
--- Global settings
-getgenv().playerData = getgenv().playerData or {}
-getgenv().matchStarted = getgenv().matchStarted or false
-getgenv().matchEnded = getgenv().matchEnded or false
-getgenv().Connections = getgenv().Connections or {}
+-- Cleanup previous ESP
+ValoxESP.Boxes = {}
+ValoxESP.Names = {}
+ValoxESP.Connections = {}
+ValoxESP.Settings = {
+    ESPEnabled = true
+}
 
 -- GUI Setup
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ValoxMM2ESP"
-ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = game:GetService("CoreGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0,250,0,230)
+MainFrame.Size = UDim2.new(0,250,0,220)
 MainFrame.Position = UDim2.new(0.05,0,0.2,0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 MainFrame.BackgroundTransparency = 0.3
 MainFrame.BorderSizePixel = 0
 MainFrame.Parent = ScreenGui
+MainFrame.ClipsDescendants = true
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0,12)
 corner.Parent = MainFrame
 
+-- Draggable
 MainFrame.Active = true
 MainFrame.Draggable = true
 
--- Show button
+-- Show button (when GUI hidden)
 local ShowButton = Instance.new("TextButton")
 ShowButton.Size = UDim2.new(0,50,0,50)
 ShowButton.Position = UDim2.new(0,10,0,10)
-ShowButton.Text = "O"
-ShowButton.TextScaled = true
+ShowButton.Text = "ESP"
+ShowButton.Visible = false
 ShowButton.BackgroundColor3 = Color3.fromRGB(50,50,50)
 ShowButton.TextColor3 = Color3.new(1,1,1)
-ShowButton.Visible = false
-ShowButton.Parent = ScreenGui
-
 local showCorner = Instance.new("UICorner")
 showCorner.CornerRadius = UDim.new(0,25)
 showCorner.Parent = ShowButton
-
+ShowButton.Parent = ScreenGui
 ShowButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = true
     ShowButton.Visible = false
 end)
 
--- Close button
+-- Close GUI button (circle)
 local CloseButton = Instance.new("TextButton")
 CloseButton.Size = UDim2.new(0,30,0,30)
 CloseButton.Position = UDim2.new(1,-35,0,5)
@@ -72,165 +68,207 @@ CloseButton.Text = "X"
 CloseButton.BackgroundColor3 = Color3.fromRGB(200,200,200)
 CloseButton.TextColor3 = Color3.new(0,0,0)
 CloseButton.Parent = MainFrame
-
 local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0,15)
 closeCorner.Parent = CloseButton
-
 CloseButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
     ShowButton.Visible = true
 end)
 
--- Toggle helper
-local function CreateToggle(name, default, yPos)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1,0,0,30)
-    frame.Position = UDim2.new(0,0,0,yPos)
-    frame.BackgroundTransparency = 1
-    frame.Parent = MainFrame
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.65,0,1,0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = Color3.new(1,1,1)
-    label.TextScaled = true
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = frame
-
+-- Toggle Button Helper
+local function CreateToggle(name, default, position)
     local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0.35,0,1,0)
-    button.Position = UDim2.new(0.65,0,0,0)
-    button.Text = default and "ON" or "OFF"
-    button.TextScaled = true
-    button.BackgroundColor3 = default and Color3.fromRGB(0,150,0) or Color3.fromRGB(150,0,0)
+    button.Size = UDim2.new(0,200,0,30)
+    button.Position = position
+    button.Text = name
+    button.BackgroundColor3 = default and Color3.fromRGB(0,200,0) or Color3.fromRGB(200,0,0)
     button.TextColor3 = Color3.new(1,1,1)
-    button.Parent = frame
-
+    button.Parent = MainFrame
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0,12)
+    corner.CornerRadius = UDim.new(0,6)
     corner.Parent = button
-
     local state = default
     button.MouseButton1Click:Connect(function()
         state = not state
-        button.Text = state and "ON" or "OFF"
-        TweenService:Create(button,TweenInfo.new(0.2),{BackgroundColor3 = state and Color3.fromRGB(0,150,0) or Color3.fromRGB(150,0,0)}):Play()
+        button.BackgroundColor3 = state and Color3.fromRGB(0,200,0) or Color3.fromRGB(200,0,0)
+        ValoxESP.Settings.ESPEnabled = state
     end)
-
-    return function() return state end
 end
 
-local ShowESP = CreateToggle("ESP", true, 50)
-local ShowNames = CreateToggle("Name ESP", true, 90)
+CreateToggle("ESP", true, UDim2.new(0,20,0,40))
 
 -- Kill All Button
 local KillAllButton = Instance.new("TextButton")
-KillAllButton.Size = UDim2.new(0.9,0,0,40)
-KillAllButton.Position = UDim2.new(0.05,0,0,140)
-KillAllButton.Text = "Kill All"
-KillAllButton.TextScaled = true
-KillAllButton.BackgroundColor3 = Color3.fromRGB(200,50,50)
+KillAllButton.Size = UDim2.new(0,200,0,30)
+KillAllButton.Position = UDim2.new(0,20,0,80)
+KillAllButton.Text = "Kill All (3s)"
+KillAllButton.BackgroundColor3 = Color3.fromRGB(255,0,0)
 KillAllButton.TextColor3 = Color3.new(1,1,1)
 KillAllButton.Parent = MainFrame
-
 local killCorner = Instance.new("UICorner")
-killCorner.CornerRadius = UDim.new(0,12)
+killCorner.CornerRadius = UDim.new(0,6)
 killCorner.Parent = KillAllButton
 
--- Function to stab with knife
-local function stabKnife()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local knife = char:FindFirstChild("Knife")
-    if not knife then return end
-    local stab = knife:FindFirstChild("Stab")
-    if stab then
-        pcall(function()
-            stab:FireServer("Slash")
-        end)
+-- Gun Beam Button
+local GunBeamButton = Instance.new("TextButton")
+GunBeamButton.Size = UDim2.new(0,200,0,30)
+GunBeamButton.Position = UDim2.new(0,20,0,120)
+GunBeamButton.Text = "Gun Beam"
+GunBeamButton.BackgroundColor3 = Color3.fromRGB(0,0,255)
+GunBeamButton.TextColor3 = Color3.new(1,1,1)
+GunBeamButton.Parent = MainFrame
+local gunCorner = Instance.new("UICorner")
+gunCorner.CornerRadius = UDim.new(0,6)
+gunCorner.Parent = GunBeamButton
+
+-- Role Detection Functions
+local function isMobile()
+    local success, result = pcall(function()
+        return LocalPlayer.PlayerGui
+    end)
+    return not success
+end
+
+local function getRoleColor(player)
+    local char = player.Character
+    if char then
+        local hasKnife = char:FindFirstChild("Knife") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Knife"))
+        local hasGun = char:FindFirstChild("Gun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Gun"))
+        if hasKnife then return Color3.fromRGB(255,0,0)
+        elseif hasGun then return Color3.fromRGB(0,0,255)
+        else return Color3.fromRGB(0,255,0)
+        end
+    end
+    return Color3.fromRGB(255,255,255)
+end
+
+-- ESP Functions
+local function createESP(player)
+    if ValoxESP.Boxes[player] then return end
+    if not player.Character then return end
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ValoxESPHighlight"
+    highlight.Adornee = player.Character
+    highlight.FillColor = getRoleColor(player)
+    highlight.FillTransparency = 0.25
+    highlight.OutlineColor = Color3.new(1,1,1)
+    highlight.OutlineTransparency = 0
+    highlight.Parent = player.Character
+    ValoxESP.Boxes[player] = highlight
+
+    local head = player.Character:FindFirstChild("Head")
+    if head then
+        local nameTag = Instance.new("BillboardGui")
+        nameTag.Name = "ValoxESPName"
+        nameTag.Adornee = head
+        nameTag.Size = UDim2.new(0,100,0,30)
+        nameTag.AlwaysOnTop = true
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1,0,1,0)
+        label.BackgroundTransparency = 1
+        label.Text = player.Name
+        label.TextColor3 = getRoleColor(player)
+        label.Parent = nameTag
+        nameTag.Parent = player.Character
+        ValoxESP.Names[player] = label
     end
 end
 
--- Loop Bring Logic
-local LOOP_BRING_DISTANCE = -1
-local bringConnection
-local function loopBring(duration)
+local function removeESP(player)
+    if ValoxESP.Boxes[player] then
+        ValoxESP.Boxes[player]:Destroy()
+        ValoxESP.Boxes[player] = nil
+    end
+    if ValoxESP.Names[player] then
+        ValoxESP.Names[player].Parent:Destroy()
+        ValoxESP.Names[player] = nil
+    end
+end
+
+local function updateESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            if ValoxESP.Settings.ESPEnabled then
+                createESP(player)
+                if ValoxESP.Boxes[player] then
+                    ValoxESP.Boxes[player].FillColor = getRoleColor(player)
+                end
+                if ValoxESP.Names[player] then
+                    ValoxESP.Names[player].TextColor3 = getRoleColor(player)
+                end
+            else
+                removeESP(player)
+            end
+        end
+    end
+end
+
+-- Continuous ESP Update
+RunService.RenderStepped:Connect(updateESP)
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        updateESP()
+    end)
+end)
+Players.PlayerRemoving:Connect(function(player)
+    removeESP(player)
+end)
+
+-- Loop Bring Kill All
+local function loopBring(duration, offset)
     local startTime = tick()
-    bringConnection = RunService.Heartbeat:Connect(function()
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > duration then
+            if conn then conn:Disconnect() end
+            return
+        end
         local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if root then
-            local targetCFrame = root.CFrame * CFrame.new(0,0,LOOP_BRING_DISTANCE)
+            local targetCFrame = root.CFrame * CFrame.new(0,0,-offset)
             for _, player in pairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                     local hrp = player.Character.HumanoidRootPart
                     hrp.CFrame = targetCFrame
                     for _, part in pairs(player.Character:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = false
-                        end
+                        if part:IsA("BasePart") then part.CanCollide = false end
                     end
                 end
             end
-            stabKnife()
-        end
-        if tick() - startTime >= duration then
-            if bringConnection then
-                bringConnection:Disconnect()
-                bringConnection = nil
-            end
-            for _, player in pairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and player.Character then
-                    for _, part in pairs(player.Character:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = true
-                        end
-                    end
-                end
+            -- Stab
+            local knife = LocalPlayer.Character:FindFirstChild("Knife")
+            if knife and knife:FindFirstChild("Stab") then
+                local args = {"Slash"}
+                knife.Stab:FireServer(unpack(args))
             end
         end
     end)
 end
 
 KillAllButton.MouseButton1Click:Connect(function()
-    loopBring(3)
+    loopBring(3,1)
 end)
 
--- Role detection
-local function isMobile()
-    return UserInputService.TouchEnabled
-end
-
-local function updatePlayerData()
-    for _, player in ipairs(Players:GetPlayers()) do
-        local char = player.Character
-        local isDead = char and char:FindFirstChild("Humanoid") and char.Humanoid.Health <= 0
-        local hasGun = false
-        if char then
-            for _, item in pairs(char:GetChildren()) do
-                if item:IsA("Tool") and item.Name:match("Gun") then
-                    hasGun = true
-                    break
-                end
+-- Gun Beam
+GunBeamButton.MouseButton1Click:Connect(function()
+    local murderer
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local hasKnife = p.Character:FindFirstChild("Knife") or (p:FindFirstChild("Backpack") and p.Backpack:FindFirstChild("Knife"))
+            if hasKnife then
+                murderer = p
+                break
             end
         end
-        if not hasGun and player.Backpack then
-            for _, item in pairs(player.Backpack:GetChildren()) do
-                if item:IsA("Tool") and item.Name:match("Gun") then
-                    hasGun = true
-                    break
-                end
-            end
+    end
+    if not murderer then return end
+    local torso = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+    if torso then
+        local gun = LocalPlayer.Character:FindFirstChild("Gun")
+        if gun and gun:FindFirstChild("KnifeLocal") and gun.KnifeLocal:FindFirstChild("CreateBeam") and gun.KnifeLocal.CreateBeam:FindFirstChild("RemoteFunction") then
+            gun.KnifeLocal.CreateBeam.RemoteFunction:InvokeServer(1, torso.Position, "AH2")
         end
-
-        local role = "Unknown"
-        if isMobile() then
-            if hasGun then role = "Sheriff" end
-        else
-            local success, GetCurrentPlayerData = pcall(function()
-                return ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("GetCurrentPlayerData")
-            end)
-            if success and GetCurrentPlayerData then
-                local ok, data = pcall(function() return GetCurrentPlayerData:InvokeServer() end)
-                if ok and data and data[player
+    end
+end)
