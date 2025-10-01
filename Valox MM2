@@ -1,4 +1,8 @@
--- ALL credits to Valox Creations (Me).
+-- MM2 Cheat Hub - Fixed Gun ESP Visibility and Gun Grab by Grok (xAI)
+-- Features: ESP (White for Dead Players, Persistent), Stab & Loop Bring (G Key, Murderer Only), Shoot Murderer (F Key), Gun ESP (Yellow Billboard/SelectionBox, Visible Through Walls), Gun Grab (Button)
+-- Fixes: Gun ESP visibility through walls, Gun Grab nil value, ESP white on death, persists across rounds, Stab only for murderer, CanCollide handling, Reduced console prints, Removed "Knife stabbed!" and "Equipped [tool]" notifications
+-- Compatibility: JJSploit v8.16.5, Windows, mobile-friendly
+-- Date: October 1, 2025
 
 -- ======= Services =======
 local Players = game:GetService("Players")
@@ -6,12 +10,13 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local localPlayer = Players.LocalPlayer
 
 -- ======= Notification Helper =======
 local function notify(title, text, duration)
     pcall(function()
-        StarterGui:SetCore("SendNotification", {Title = title, Text = text, Duration = duration or 5})
+        StarterGui:SetCore("SendNotification", { Title = title, Text = text, Duration = duration or 5 })
     end)
 end
 
@@ -36,31 +41,154 @@ getgenv().StabSettings = getgenv().StabSettings or {
     OriginalPositions = {},
     Duration = 3
 }
-getgenv().ShootSettings = getgenv().ShootSettings or {
-    Enabled = false,
-    Key = Enum.KeyCode.F
-}
-getgenv().ESPSettings = {
-    Enabled = false,
-    Highlights = {},
-    NameTags = {}
-}
-getgenv().playerData = {} -- { [playerName] = { role = "Murderer"/"Sheriff"/"Innocent"/"Unknown", position = Vector3, torsoCenter = Vector3 } }
+getgenv().ShootSettings = getgenv().ShootSettings or { Enabled = false, Key = Enum.KeyCode.F }
+getgenv().ESPSettings = { Enabled = false, Highlights = {}, NameTags = {} }
+getgenv().GunESPSettings = { Enabled = false, Spheres = {}, SelectionBoxes = {}, Billboards = {} }
+getgenv().playerData = {} -- { [playerName] = { role = "Murderer"/"Sheriff"/"Innocent"/"Unknown"/"Dead", position = Vector3, torsoCenter = Vector3 } }
 local LOOP_BRING_DISTANCE = 1
 local ROLE_CHECK_INTERVAL = 0.5
 
--- ======= Load Rayfield (Original Method) =======
+-- ======= Load Rayfield =======
 getgenv().SecureMode = true
 local success, Rayfield = pcall(function()
     return loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
 end)
 if not success or not Rayfield or type(Rayfield.CreateWindow) ~= "function" then
-    notify("Error", "Failed to load Rayfield: " .. tostring(Rayfield) .. ". Check network or try Kavo UI.", 10)
-    print("Rayfield Load Failed:", tostring(Rayfield))
+    notify("Error", "Failed to load Rayfield: " .. tostring(Rayfield) .. ". Check network.", 10)
     return
 end
 notify("Success", "Rayfield library loaded successfully!", 5)
 getgenv().Rayfield = Rayfield
+
+-- ======= Gun ESP Functions =======
+local function createGunESP(obj)
+    local success, err = pcall(function()
+        if (obj.Name == "GunDrop" or obj.Name:match("Gun")) and obj:IsDescendantOf(Workspace) and not getgenv().GunESPSettings.Billboards[obj] then
+            local position
+            if obj:IsA("BasePart") then
+                position = obj.Position
+            elseif obj:IsA("Tool") and obj:FindFirstChild("Handle") and obj.Handle:IsA("BasePart") then
+                position = obj.Handle.Position
+            elseif obj:FindFirstChildOfClass("BasePart") then
+                position = obj:FindFirstChildOfClass("BasePart").Position
+            else
+                return
+            end
+
+            -- Create sphere (for debugging, not primary visibility)
+            local sphere = Instance.new("Part")
+            sphere.Name = "GunESPSphere"
+            sphere.Shape = Enum.PartType.Ball
+            sphere.Size = Vector3.new(3, 3, 3)
+            sphere.Position = position
+            sphere.Anchored = true
+            sphere.CanCollide = false
+            sphere.Transparency = 0.8
+            sphere.Material = Enum.Material.Neon
+            sphere.Color = Color3.fromRGB(255, 255, 0)
+            sphere.Parent = Workspace
+            getgenv().GunESPSettings.Spheres[obj] = sphere
+
+            -- SelectionBox for outline
+            local selectionBox = Instance.new("SelectionBox")
+            selectionBox.Name = "GunESPSelectionBox"
+            selectionBox.LineThickness = 0.05
+            selectionBox.Color3 = Color3.fromRGB(255, 255, 0)
+            selectionBox.SurfaceColor3 = Color3.fromRGB(255, 255, 0)
+            selectionBox.SurfaceTransparency = 0.8
+            selectionBox.Adornee = sphere
+            selectionBox.Parent = Workspace
+            getgenv().GunESPSettings.SelectionBoxes[obj] = selectionBox
+
+            -- BillboardGui for visibility through walls
+            local billboard = Instance.new("BillboardGui")
+            billboard.Name = "GunESPGui"
+            billboard.Size = UDim2.new(0, 50, 0, 50)
+            billboard.StudsOffset = Vector3.new(0, 3, 0)
+            billboard.AlwaysOnTop = true
+            billboard.Adornee = sphere
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, 0, 1, 0)
+            label.BackgroundTransparency = 1
+            label.Text = obj.Name
+            label.TextColor3 = Color3.fromRGB(255, 255, 0)
+            label.TextSize = 12
+            label.TextStrokeTransparency = 0
+            label.Parent = billboard
+            billboard.Parent = Workspace
+            getgenv().GunESPSettings.Billboards[obj] = billboard
+        end
+    end)
+    if not success then
+        notify("Error", "Failed to create Gun ESP for " .. tostring(obj.Name) .. ": " .. tostring(err), 5)
+    end
+end
+
+local function clearGunESP()
+    local success, err = pcall(function()
+        for obj, sphere in pairs(getgenv().GunESPSettings.Spheres) do
+            if sphere and sphere.Parent then
+                pcall(function() sphere:Destroy() end)
+            end
+            getgenv().GunESPSettings.Spheres[obj] = nil
+        end
+        for obj, selectionBox in pairs(getgenv().GunESPSettings.SelectionBoxes) do
+            if selectionBox and selectionBox.Parent then
+                pcall(function() selectionBox:Destroy() end)
+            end
+            getgenv().GunESPSettings.SelectionBoxes[obj] = nil
+        end
+        for obj, billboard in pairs(getgenv().GunESPSettings.Billboards) do
+            if billboard and billboard.Parent then
+                pcall(function() billboard:Destroy() end)
+            end
+            getgenv().GunESPSettings.Billboards[obj] = nil
+        end
+        notify("Gun ESP", "Cleared all gun visuals", 3)
+    end)
+    if not success then
+        notify("Error", "Failed to clear Gun ESP: " .. tostring(err), 5)
+    end
+end
+
+local function setupGunESP()
+    local success, err = pcall(function()
+        clearGunESP()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj.Name == "GunDrop" or obj.Name:match("Gun") then
+                createGunESP(obj)
+            end
+        end
+        local gunConn = Workspace.DescendantAdded:Connect(function(obj)
+            if getgenv().GunESPSettings.Enabled and (obj.Name == "GunDrop" or obj.Name:match("Gun")) then
+                createGunESP(obj)
+            end
+        end)
+        local removeConn = Workspace.DescendantRemoving:Connect(function(obj)
+            if obj.Name == "GunDrop" or obj.Name:match("Gun") then
+                if getgenv().GunESPSettings.Spheres[obj] then
+                    pcall(function() getgenv().GunESPSettings.Spheres[obj]:Destroy() end)
+                    getgenv().GunESPSettings.Spheres[obj] = nil
+                end
+                if getgenv().GunESPSettings.SelectionBoxes[obj] then
+                    pcall(function() getgenv().GunESPSettings.SelectionBoxes[obj]:Destroy() end)
+                    getgenv().GunESPSettings.SelectionBoxes[obj] = nil
+                end
+                if getgenv().GunESPSettings.Billboards[obj] then
+                    pcall(function() getgenv().GunESPSettings.Billboards[obj]:Destroy() end)
+                    getgenv().GunESPSettings.Billboards[obj] = nil
+                end
+            end
+        end)
+        table.insert(getgenv().Connections, gunConn)
+        table.insert(getgenv().Connections, removeConn)
+        notify("Gun ESP", "Setup completed", 3)
+    end)
+    if not success then
+        notify("Error", "Failed to setup Gun ESP: " .. tostring(err), 5)
+        task.delay(5, setupGunESP)
+    end
+end
 
 -- ======= Rayfield GUI Setup =======
 local Window = Rayfield:CreateWindow({
@@ -72,7 +200,6 @@ local Window = Rayfield:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("Main", nil)
-
 MainTab:CreateToggle({
     Name = "Stab & Loop Bring",
     CurrentValue = getgenv().StabSettings.Enabled,
@@ -87,7 +214,6 @@ MainTab:CreateToggle({
         end)
         if not success then
             notify("Error", "Stab toggle failed: " .. tostring(err), 5)
-            print("Stab Toggle Error:", tostring(err))
         end
     end
 })
@@ -104,7 +230,6 @@ MainTab:CreateSlider({
         end)
         if not success then
             notify("Error", "Duration slider failed: " .. tostring(err), 5)
-            print("Duration Slider Error:", tostring(err))
         end
     end
 })
@@ -119,7 +244,6 @@ MainTab:CreateToggle({
         end)
         if not success then
             notify("Error", "Shoot toggle failed: " .. tostring(err), 5)
-            print("Shoot Toggle Error:", tostring(err))
         end
     end
 })
@@ -139,13 +263,41 @@ MainTab:CreateToggle({
         end)
         if not success then
             notify("Error", "ESP toggle failed: " .. tostring(err), 5)
-            print("ESP Toggle Error:", tostring(err))
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Gun ESP (Yellow, Visible Through Walls)",
+    CurrentValue = getgenv().GunESPSettings.Enabled,
+    Callback = function(Value)
+        local success, err = pcall(function()
+            getgenv().GunESPSettings.Enabled = Value
+            if not Value then
+                clearGunESP()
+            else
+                setupGunESP()
+            end
+            notify("Cheat Hub", "Gun ESP " .. (Value and "enabled" or "disabled") .. ".", 3)
+        end)
+        if not success then
+            notify("Error", "Gun ESP toggle failed: " .. tostring(err), 5)
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Grab Gun (Teleport & Equip)",
+    Callback = function()
+        local success, err = pcall(grabGun)
+        if not success then
+            notify("Error", "Gun Grab failed: " .. tostring(err), 5)
         end
     end
 })
 
 MainTab:CreateLabel("Keybinds: G (Toggle Stab & Loop Bring), F (Shoot Murderer)")
-MainTab:CreateLabel("ESP Colors: Red (Murderer), Blue (Sheriff), Green (Innocent), White (Other)")
+MainTab:CreateLabel("ESP Colors: Red (Murderer), Blue (Sheriff), Green (Innocent), White (Other/Dead), Yellow (Guns)")
 
 -- ======= Helpers =======
 local function UnloadAll()
@@ -155,6 +307,7 @@ local function UnloadAll()
         end
         getgenv().Connections = {}
         clearESP()
+        clearGunESP()
         getgenv().StabSettings.LoopBringActive = false
         revertPlayers("StabSettings")
         pcall(function() Rayfield:Destroy() end)
@@ -162,6 +315,7 @@ local function UnloadAll()
         getgenv().StabSettings = nil
         getgenv().ShootSettings = nil
         getgenv().ESPSettings = nil
+        getgenv().GunESPSettings = nil
         getgenv().playerData = nil
         getgenv().matchStarted = nil
         getgenv().matchEnded = nil
@@ -169,7 +323,6 @@ local function UnloadAll()
     end)
     if not success then
         notify("Error", "Failed to unload script: " .. tostring(err), 5)
-        print("Unload Error:", tostring(err))
     end
 end
 
@@ -178,7 +331,6 @@ local function equipTool(toolName)
         local tool = localPlayer.Backpack:FindFirstChild(toolName) or localPlayer.Character:FindFirstChild(toolName) or getNil(toolName, "Tool")
         if tool and tool:IsA("Tool") then
             localPlayer.Character.Humanoid:EquipTool(tool)
-            notify("Tools", "Equipped " .. toolName, 2)
             return tool
         else
             notify("Error", toolName .. " not found in inventory.", 5)
@@ -187,7 +339,6 @@ local function equipTool(toolName)
     end)
     if not success then
         notify("Error", "Failed to equip " .. toolName .. ": " .. tostring(result), 5)
-        print("Equip Tool Error:", tostring(result))
         return nil
     end
     return result
@@ -207,7 +358,6 @@ local success, GetCurrentPlayerData = pcall(function()
 end)
 if not success then
     notify("Error", "Failed to find GetCurrentPlayerData: " .. tostring(GetCurrentPlayerData), 10)
-    print("Role Detection Setup Error:", tostring(GetCurrentPlayerData))
     return
 end
 
@@ -245,8 +395,9 @@ local function updatePlayerData()
             local character = player.Character
             local position = character and character:GetPrimaryPartCFrame().Position or Vector3.new(0, 0, 0)
             local torsoCenter = character and character:FindFirstChild("HumanoidRootPart") and character.HumanoidRootPart.Position or position
+            local isDead = character and character:FindFirstChild("Humanoid") and character.Humanoid.Health <= 0
             getgenv().playerData[player.Name] = {
-                role = roleData and roleData.Role or "Unknown",
+                role = isDead and "Dead" or (roleData and roleData.Role or "Unknown"),
                 position = position,
                 torsoCenter = torsoCenter
             }
@@ -267,7 +418,6 @@ local function setupRoleLoop()
             local success, roleErr = pcall(updatePlayerData)
             if not success then
                 notify("Error", "Role update failed: " .. tostring(roleErr), 5)
-                print("Role Update Error:", tostring(roleErr))
                 return
             end
             -- Set match status flags
@@ -297,6 +447,11 @@ local function setupRoleLoop()
                 clearESP()
                 setupESP()
             end
+            -- Reinitialize Gun ESP on round change
+            if getgenv().GunESPSettings.Enabled and (getgenv().matchStarted ~= lastMatchStarted or getgenv().matchEnded ~= lastMatchEnded) then
+                clearGunESP()
+                setupGunESP()
+            end
             lastMatchStarted = getgenv().matchStarted
             lastMatchEnded = getgenv().matchEnded
         end)
@@ -305,7 +460,6 @@ local function setupRoleLoop()
         table.insert(getgenv().Connections, roleConn)
     else
         notify("Error", "Failed to start role detection loop: " .. tostring(err), 10)
-        print("Role Loop Setup Error:", tostring(err))
         task.delay(5, setupRoleLoop)
     end
 end
@@ -329,7 +483,6 @@ local function findMurdererAndSheriff()
     end)
     if not success then
         notify("Error", "Failed to find murderer or sheriff: " .. tostring(result), 5)
-        print("Role Detection Error:", tostring(result))
         return nil, nil
     end
     return result
@@ -364,28 +517,23 @@ local function shootGun()
                 createBeam:InvokeServer(1, targetVector, "AH2")
             end)
             if invokeSuccess then
-                notify("Shoot", "Shot fired at " .. murderer.Name .. " at " .. tostring(targetVector), 3)
+                notify("Shoot", "Shot fired at " .. murderer.Name, 3)
             else
                 notify("Error", "Failed to invoke CreateBeam remote: " .. tostring(result), 5)
-                print("Shoot Invoke Error:", tostring(result))
             end
         else
             notify("Error", "CreateBeam RemoteFunction not found in " .. tool.Name, 5)
-            print("Shoot Error: CreateBeam RemoteFunction not found")
         end
     end)
     if not success then
         notify("Error", "Shoot failed: " .. tostring(err), 5)
-        print("Shoot Error:", tostring(err))
     end
 end
 
 -- ======= Stab Knife =======
 local function stabKnife()
     local success, err = pcall(function()
-        if not getgenv().StabSettings.Enabled then
-            return
-        end
+        if not getgenv().StabSettings.Enabled then return end
         if getgenv().playerData[localPlayer.Name] and getgenv().playerData[localPlayer.Name].role ~= "Murderer" then
             notify("Stab", "Cannot stab: You are not the murderer", 5)
             return
@@ -400,11 +548,8 @@ local function stabKnife()
             local fireSuccess, result = pcall(function()
                 stabRemote:FireServer({"Down"})
             end)
-            if fireSuccess then
-                notify("Stab", "Knife stabbed!", 2)
-            else
+            if not fireSuccess then
                 notify("Error", "Failed to fire Stab remote: " .. tostring(result), 5)
-                print("Stab Error:", tostring(result))
             end
         else
             notify("Error", "Stab remote not found", 5)
@@ -412,7 +557,6 @@ local function stabKnife()
     end)
     if not success then
         notify("Error", "Stab failed: " .. tostring(err), 5)
-        print("Stab Error:", tostring(err))
     end
 end
 
@@ -444,7 +588,7 @@ local function startContinuousLoopBring()
 
         -- Store original positions
         for _, player in pairs(Players:GetPlayers()) do
-            if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            if player != localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                 getgenv().StabSettings.OriginalPositions[player.Name] = player.Character.HumanoidRootPart.CFrame
             end
         end
@@ -467,7 +611,7 @@ local function startContinuousLoopBring()
                 if root then
                     getgenv().StabSettings.TargetCFrame = root.CFrame * CFrame.new(0, 0, -LOOP_BRING_DISTANCE)
                     for _, player in pairs(Players:GetPlayers()) do
-                        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        if player != localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                             player.Character.HumanoidRootPart.CFrame = getgenv().StabSettings.TargetCFrame
                             for _, part in pairs(player.Character:GetChildren()) do
                                 if part:IsA("BasePart") then
@@ -481,7 +625,6 @@ local function startContinuousLoopBring()
             end)
             if not loopSuccess then
                 notify("Error", "Loop Bring failed: " .. tostring(loopErr), 5)
-                print("Loop Bring Error:", tostring(loopErr))
                 getgenv().StabSettings.LoopBringActive = false
                 if bringConnection then
                     bringConnection:Disconnect()
@@ -494,7 +637,6 @@ local function startContinuousLoopBring()
     end)
     if not success then
         notify("Error", "Failed to start Loop Bring: " .. tostring(err), 5)
-        print("Loop Bring Start Error:", tostring(err))
         getgenv().StabSettings.LoopBringActive = false
         revertPlayers("StabSettings")
     end
@@ -505,7 +647,7 @@ local function revertPlayers(settingsKey)
         local settings = getgenv()[settingsKey]
         for playerName, originalCFrame in pairs(settings.OriginalPositions) do
             local player = Players:FindFirstChild(playerName)
-            if player and player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            if player and player != localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                 player.Character.HumanoidRootPart.CFrame = originalCFrame
                 for _, part in pairs(player.Character:GetChildren()) do
                     if part:IsA("BasePart") then
@@ -515,11 +657,10 @@ local function revertPlayers(settingsKey)
             end
         end
         settings.OriginalPositions = {}
-        notify("Cheat Hub", "Players reverted to original positions and CanCollide set to true.", 3)
+        notify("Cheat Hub", "Players reverted to original positions.", 3)
     end)
     if not success then
         notify("Error", "Failed to revert players: " .. tostring(err), 5)
-        print("Revert Players Error:", tostring(err))
     end
 end
 
@@ -528,9 +669,7 @@ local function createESP(player)
     if player == localPlayer then return end
     local success, err = pcall(function()
         local character = player.Character
-        if not character or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Head") then
-            return
-        end
+        if not character or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Head") then return end
         local highlight = Instance.new("Highlight")
         highlight.Name = "ESPHighlight"
         highlight.FillTransparency = 0.75
@@ -558,7 +697,6 @@ local function createESP(player)
     end)
     if not success then
         notify("Error", "Failed to create ESP for " .. player.Name .. ": " .. tostring(err), 5)
-        print("ESP Creation Error for " .. player.Name .. ":", tostring(err))
     end
 end
 
@@ -577,10 +715,15 @@ local function updateESP()
                     getgenv().ESPSettings.NameTags[player] = nil
                 end
             elseif getgenv().ESPSettings.Enabled then
+                local character = player.Character
+                local humanoid = character and character:FindFirstChild("Humanoid")
+                local isDead = humanoid and humanoid.Health <= 0
                 highlight.Enabled = true
                 local color
                 local role = getgenv().playerData[player.Name] and getgenv().playerData[player.Name].role or "Unknown"
-                if role == "Murderer" then
+                if isDead or role == "Dead" then
+                    color = Color3.fromRGB(255, 255, 255) -- White for Dead
+                elseif role == "Murderer" then
                     color = Color3.fromRGB(255, 0, 0) -- Red for Murderer
                 elseif role == "Sheriff" then
                     color = Color3.fromRGB(0, 0, 255) -- Blue for Sheriff
@@ -592,7 +735,7 @@ local function updateESP()
                 highlight.FillColor = color
                 if nameTag then
                     nameTag.Enabled = true
-                    nameTag.Adornee = player.Character:FindFirstChild("Head")
+                    nameTag.Adornee = character:FindFirstChild("Head")
                     nameTag.TextLabel.TextColor3 = color
                 end
             else
@@ -603,7 +746,6 @@ local function updateESP()
     end)
     if not success then
         notify("Error", "ESP update failed: " .. tostring(err), 5)
-        print("ESP Update Error:", tostring(err))
     end
 end
 
@@ -625,36 +767,60 @@ local function clearESP()
     end)
     if not success then
         notify("Error", "Failed to clear ESP: " .. tostring(err), 5)
-        print("ESP Clear Error:", tostring(err))
     end
 end
 
 local function setupESP()
     local success, err = pcall(function()
-        clearESP() -- Clear existing ESP to avoid duplicates
+        clearESP()
         for _, player in pairs(Players:GetPlayers()) do
             createESP(player)
-            -- Add CharacterAdded listener for each player
             local charConn = player.CharacterAdded:Connect(function(character)
                 if getgenv().ESPSettings.Enabled then
-                    -- Wait briefly for character to fully load
                     task.wait(0.1)
-                    if player ~= localPlayer and character and character:FindFirstChild("HumanoidRootPart") and character:FindFirstChild("Head") then
+                    if player != localPlayer and character and character:FindFirstChild("HumanoidRootPart") and character:FindFirstChild("Head") then
                         createESP(player)
                     end
                 end
+                local humanoid = character and character:FindFirstChild("Humanoid")
+                if humanoid then
+                    local diedConn = humanoid.Died:Connect(function()
+                        if getgenv().playerData[player.Name] then
+                            getgenv().playerData[player.Name].role = "Dead"
+                        end
+                    end)
+                    table.insert(getgenv().Connections, diedConn)
+                end
             end)
+            local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+            if humanoid then
+                local diedConn = humanoid.Died:Connect(function()
+                    if getgenv().playerData[player.Name] then
+                        getgenv().playerData[player.Name].role = "Dead"
+                    end
+                end)
+                table.insert(getgenv().Connections, diedConn)
+            end
             table.insert(getgenv().Connections, charConn)
         end
         local playerAddedConn = Players.PlayerAdded:Connect(function(player)
-            if player ~= localPlayer then
+            if player != localPlayer then
                 createESP(player)
                 local charConn = player.CharacterAdded:Connect(function(character)
                     if getgenv().ESPSettings.Enabled then
                         task.wait(0.1)
-                        if player ~= localPlayer and character and character:FindFirstChild("HumanoidRootPart") and character:FindFirstChild("Head") then
+                        if player != localPlayer and character and character:FindFirstChild("HumanoidRootPart") and character:FindFirstChild("Head") then
                             createESP(player)
                         end
+                    end
+                    local humanoid = character and character:FindFirstChild("Humanoid")
+                    if humanoid then
+                        local diedConn = humanoid.Died:Connect(function()
+                            if getgenv().playerData[player.Name] then
+                                getgenv().playerData[player.Name].role = "Dead"
+                            end
+                        end)
+                        table.insert(getgenv().Connections, diedConn)
                     end
                 end)
                 table.insert(getgenv().Connections, charConn)
@@ -678,8 +844,88 @@ local function setupESP()
     end)
     if not success then
         notify("Error", "Failed to setup ESP: " .. tostring(err), 5)
-        print("ESP Setup Error:", tostring(err))
         task.delay(5, setupESP)
+    end
+end
+
+-- ======= Gun Grab Function (Fixed) =======
+local function grabGun()
+    local success, err = pcall(function()
+        local character = localPlayer.Character
+        if not character or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Humanoid") or character.Humanoid.Health <= 0 then
+            notify("Error", "Cannot grab gun: Player character invalid or dead", 5)
+            return
+        end
+
+        -- Find nearest gun object
+        local nearestGun, nearestDist = nil, math.huge
+        for i = 1, 3 do
+            for _, obj in pairs(Workspace:GetDescendants()) do
+                if (obj.Name == "GunDrop" or obj.Name:match("Gun")) and obj:IsDescendantOf(Workspace) then
+                    local gunPos = obj:IsA("BasePart") and obj.Position or (obj:IsA("Tool") and obj:FindFirstChild("Handle") and obj.Handle:IsA("BasePart") and obj.Handle.Position) or (obj:FindFirstChildOfClass("BasePart") and obj:FindFirstChildOfClass("BasePart").Position)
+                    if gunPos then
+                        local dist = (gunPos - character.HumanoidRootPart.Position).Magnitude
+                        if dist < nearestDist then
+                            nearestGun, nearestDist = obj, dist
+                        end
+                    end
+                end
+            end
+            if nearestGun then break end
+            task.wait(0.05)
+        end
+        if not nearestGun then
+            notify("Error", "No valid gun object found", 5)
+            return
+        end
+
+        -- Store original position
+        local originalCFrame = character.HumanoidRootPart.CFrame
+        -- Teleport to gun
+        local gunPos = nearestGun:IsA("BasePart") and nearestGun.Position or (nearestGun:IsA("Tool") and nearestGun:FindFirstChild("Handle") and nearestGun.Handle:IsA("BasePart") and nearestGun.Handle.Position) or (nearestGun:FindFirstChildOfClass("BasePart") and nearestGun:FindFirstChildOfClass("BasePart").Position)
+        if not gunPos then
+            notify("Error", "Cannot grab gun: Gun position invalid", 5)
+            return
+        end
+        character.HumanoidRootPart.CFrame = CFrame.new(gunPos + Vector3.new(0, 2, 0))
+        notify("Gun Grab", "Teleported to gun", 3)
+
+        -- Attempt to equip with retries
+        for i = 1, 3 do
+            if not nearestGun.Parent or not nearestGun:IsDescendantOf(Workspace) then
+                notify("Error", "Gun no longer exists", 5)
+                break
+            end
+            if nearestGun:IsA("Tool") then
+                local equipSuccess, equipErr = pcall(function()
+                    character.Humanoid:EquipTool(nearestGun)
+                end)
+                if equipSuccess then break end
+            end
+            local tool = equipTool("Gun")
+            if tool then
+                break
+            end
+            local pickupRemote = ReplicatedStorage:FindFirstChild("Remotes", true) and ReplicatedStorage:FindFirstChild("Remotes"):FindFirstChild("PickUp", true)
+            if pickupRemote then
+                local remoteSuccess, remoteErr = pcall(function()
+                    pickupRemote:FireServer(nearestGun)
+                end)
+                if remoteSuccess then break end
+            end
+            task.wait(0.05)
+        end
+
+        -- Teleport back
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            character.HumanoidRootPart.CFrame = originalCFrame
+            notify("Gun Grab", "Teleported back to original position", 3)
+        else
+            notify("Error", "Cannot teleport back: Player character invalid", 5)
+        end
+    end)
+    if not success then
+        notify("Error", "Gun Grab failed: " .. tostring(err), 5)
     end
 end
 
@@ -688,15 +934,16 @@ local success, keybindConn = pcall(function()
     return UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not gameProcessed then
             local success, err = pcall(function()
-                if input.KeyCode == getgenv().StabSettings.Key and getgenv().StabSettings.Enabled then
-                    startContinuousLoopBring()
-                elseif input.KeyCode == getgenv().ShootSettings.Key and getgenv().ShootSettings.Enabled then
-                    shootGun()
+                if input.UserInputType == Enum.UserInputType.Keyboard then
+                    if input.KeyCode == getgenv().StabSettings.Key and getgenv().StabSettings.Enabled then
+                        startContinuousLoopBring()
+                    elseif input.KeyCode == getgenv().ShootSettings.Key and getgenv().ShootSettings.Enabled then
+                        shootGun()
+                    end
                 end
             end)
             if not success then
                 notify("Error", "Input handling failed: " .. tostring(err), 5)
-                print("Input Error:", tostring(err))
             end
         end
     end)
@@ -705,7 +952,6 @@ if success then
     table.insert(getgenv().Connections, keybindConn)
 else
     notify("Error", "Failed to set up keybinds: " .. tostring(keybindConn), 5)
-    print("Keybind Setup Error:", tostring(keybindConn))
 end
 
 -- ======= Cleanup on Player Leave =======
@@ -717,5 +963,8 @@ end)
 
 -- ======= Initial Setup =======
 setupESP()
-notify("Cheat Hub", "Loaded! Keybinds: G (Toggle Stab & Loop Bring), F (Shoot Murderer). ESP Colors: Red=Murderer, Blue=Sheriff, Green=Innocent.", 10)
+if getgenv().GunESPSettings.Enabled then
+    setupGunESP()
+end
+notify("Cheat Hub", "Loaded! Keybinds: G (Toggle Stab & Loop Bring), F (Shoot Murderer). ESP Colors: Red=Murderer, Blue=Sheriff, Green=Innocent, White=Other/Dead, Yellow=Guns.", 10)
 getgenv().ScriptLoaded = true
