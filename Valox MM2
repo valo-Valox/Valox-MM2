@@ -50,11 +50,10 @@ local ROLE_CHECK_INTERVAL = 0.5
 
 -- ======= Load Rayfield =======
 getgenv().SecureMode = true
-local success, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
-end)
+local success, Rayfield = pcall(function() return loadstring(game:HttpGet('https://sirius.menu/rayfield', true))() end)
 if not success or not Rayfield or type(Rayfield.CreateWindow) ~= "function" then
     notify("Error", "Failed to load Rayfield: " .. tostring(Rayfield) .. ". Check network.", 10)
+    print("Rayfield Load Failed:", tostring(Rayfield))
     return
 end
 notify("Success", "Rayfield library loaded successfully!", 5)
@@ -74,8 +73,6 @@ local function createGunESP(obj)
             else
                 return
             end
-
-            -- Create sphere (for debugging, not primary visibility)
             local sphere = Instance.new("Part")
             sphere.Name = "GunESPSphere"
             sphere.Shape = Enum.PartType.Ball
@@ -88,8 +85,6 @@ local function createGunESP(obj)
             sphere.Color = Color3.fromRGB(255, 255, 0)
             sphere.Parent = Workspace
             getgenv().GunESPSettings.Spheres[obj] = sphere
-
-            -- SelectionBox for outline
             local selectionBox = Instance.new("SelectionBox")
             selectionBox.Name = "GunESPSelectionBox"
             selectionBox.LineThickness = 0.05
@@ -99,8 +94,6 @@ local function createGunESP(obj)
             selectionBox.Adornee = sphere
             selectionBox.Parent = Workspace
             getgenv().GunESPSettings.SelectionBoxes[obj] = selectionBox
-
-            -- BillboardGui for visibility through walls
             local billboard = Instance.new("BillboardGui")
             billboard.Name = "GunESPGui"
             billboard.Size = UDim2.new(0, 50, 0, 50)
@@ -420,7 +413,6 @@ local function setupRoleLoop()
                 notify("Error", "Role update failed: " .. tostring(roleErr), 5)
                 return
             end
-            -- Set match status flags
             local murderer, sheriff, innocents = "", "", {}
             for playerName, data in pairs(getgenv().playerData) do
                 if data.role == "Murderer" then
@@ -442,12 +434,10 @@ local function setupRoleLoop()
                 getgenv().hasPrintedRoles = false
                 notify("Match Status", "Match ended! No roles detected.", 3)
             end
-            -- Reinitialize ESP on round change
             if getgenv().ESPSettings.Enabled and (getgenv().matchStarted ~= lastMatchStarted or getgenv().matchEnded ~= lastMatchEnded) then
                 clearESP()
                 setupESP()
             end
-            -- Reinitialize Gun ESP on round change
             if getgenv().GunESPSettings.Enabled and (getgenv().matchStarted ~= lastMatchStarted or getgenv().matchEnded ~= lastMatchEnded) then
                 clearGunESP()
                 setupGunESP()
@@ -585,15 +575,11 @@ local function startContinuousLoopBring()
         getgenv().StabSettings.LoopBringActive = true
         getgenv().StabSettings.OriginalPositions = {}
         notify("Loop Bring", "Continuous Loop Bring enabled for " .. getgenv().StabSettings.Duration .. "s", 3)
-
-        -- Store original positions
         for _, player in pairs(Players:GetPlayers()) do
             if player != localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                 getgenv().StabSettings.OriginalPositions[player.Name] = player.Character.HumanoidRootPart.CFrame
             end
         end
-
-        -- Continuous update
         local startTime = tick()
         bringConnection = RunService.Heartbeat:Connect(function()
             if not getgenv().StabSettings.LoopBringActive or (tick() - startTime >= getgenv().StabSettings.Duration) then
@@ -677,7 +663,6 @@ local function createESP(player)
         highlight.FillColor = Color3.fromRGB(255, 255, 255)
         highlight.Parent = character
         getgenv().ESPSettings.Highlights[player] = highlight
-
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "ESPNameTag"
         billboard.Size = UDim2.new(0, 100, 0, 20)
@@ -722,15 +707,15 @@ local function updateESP()
                 local color
                 local role = getgenv().playerData[player.Name] and getgenv().playerData[player.Name].role or "Unknown"
                 if isDead or role == "Dead" then
-                    color = Color3.fromRGB(255, 255, 255) -- White for Dead
+                    color = Color3.fromRGB(255, 255, 255)
                 elseif role == "Murderer" then
-                    color = Color3.fromRGB(255, 0, 0) -- Red for Murderer
+                    color = Color3.fromRGB(255, 0, 0)
                 elseif role == "Sheriff" then
-                    color = Color3.fromRGB(0, 0, 255) -- Blue for Sheriff
+                    color = Color3.fromRGB(0, 0, 255)
                 elseif role == "Innocent" then
-                    color = Color3.fromRGB(0, 255, 0) -- Green for Innocent
+                    color = Color3.fromRGB(0, 255, 0)
                 else
-                    color = Color3.fromRGB(255, 255, 255) -- White for Other
+                    color = Color3.fromRGB(255, 255, 255)
                 end
                 highlight.FillColor = color
                 if nameTag then
@@ -856,8 +841,6 @@ local function grabGun()
             notify("Error", "Cannot grab gun: Player character invalid or dead", 5)
             return
         end
-
-        -- Find nearest gun object
         local nearestGun, nearestDist = nil, math.huge
         for i = 1, 3 do
             for _, obj in pairs(Workspace:GetDescendants()) do
@@ -878,10 +861,7 @@ local function grabGun()
             notify("Error", "No valid gun object found", 5)
             return
         end
-
-        -- Store original position
         local originalCFrame = character.HumanoidRootPart.CFrame
-        -- Teleport to gun
         local gunPos = nearestGun:IsA("BasePart") and nearestGun.Position or (nearestGun:IsA("Tool") and nearestGun:FindFirstChild("Handle") and nearestGun.Handle:IsA("BasePart") and nearestGun.Handle.Position) or (nearestGun:FindFirstChildOfClass("BasePart") and nearestGun:FindFirstChildOfClass("BasePart").Position)
         if not gunPos then
             notify("Error", "Cannot grab gun: Gun position invalid", 5)
@@ -889,8 +869,6 @@ local function grabGun()
         end
         character.HumanoidRootPart.CFrame = CFrame.new(gunPos + Vector3.new(0, 2, 0))
         notify("Gun Grab", "Teleported to gun", 3)
-
-        -- Attempt to equip with retries
         for i = 1, 3 do
             if not nearestGun.Parent or not nearestGun:IsDescendantOf(Workspace) then
                 notify("Error", "Gun no longer exists", 5)
@@ -915,8 +893,6 @@ local function grabGun()
             end
             task.wait(0.05)
         end
-
-        -- Teleport back
         if character and character:FindFirstChild("HumanoidRootPart") then
             character.HumanoidRootPart.CFrame = originalCFrame
             notify("Gun Grab", "Teleported back to original position", 3)
@@ -932,14 +908,12 @@ end
 -- ======= Keybind Listener =======
 local success, keybindConn = pcall(function()
     return UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if not gameProcessed then
+        if not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard then
             local success, err = pcall(function()
-                if input.UserInputType == Enum.UserInputType.Keyboard then
-                    if input.KeyCode == getgenv().StabSettings.Key and getgenv().StabSettings.Enabled then
-                        startContinuousLoopBring()
-                    elseif input.KeyCode == getgenv().ShootSettings.Key and getgenv().ShootSettings.Enabled then
-                        shootGun()
-                    end
+                if input.KeyCode == getgenv().StabSettings.Key and getgenv().StabSettings.Enabled then
+                    startContinuousLoopBring()
+                elseif input.KeyCode == getgenv().ShootSettings.Key and getgenv().ShootSettings.Enabled then
+                    shootGun()
                 end
             end)
             if not success then
