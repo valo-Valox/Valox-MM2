@@ -1,23 +1,310 @@
-KillButton.MouseButton1Click:Connect(function()
-    local knife = LocalPlayer.Backpack:FindFirstChild("Knife") or LocalPlayer.Character:FindFirstChild("Knife")
-    if knife then
-        knife.Parent = LocalPlayer.Character
+-- Valox MM2 ESP v7 - Mobile/PC Role Detection + Kill All LoopBring
+if getgenv().ValoxMM2ESP then
+    getgenv().ValoxMM2ESP:Destroy()
+end
+
+local ValoxESP = {}
+getgenv().ValoxMM2ESP = ValoxESP
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Detect if mobile
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+-- Settings
+getgenv().playerData = {}
+getgenv().matchStarted = false
+getgenv().matchEnded = false
+getgenv().hasPrintedRoles = false
+getgenv().hasPrintedNoRoles = false
+getgenv().Connections = {}
+
+-- GUI Setup
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ValoxMM2ESP"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game:GetService("CoreGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0,250,0,300)
+MainFrame.Position = UDim2.new(0.05,0,0.2,0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
+MainFrame.BackgroundTransparency = 0.3
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0,12)
+corner.Parent = MainFrame
+
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+-- Circle Hide/Show Button
+local CircleButton = Instance.new("TextButton")
+CircleButton.Size = UDim2.new(0,30,0,30)
+CircleButton.Position = UDim2.new(1,-35,0,5)
+CircleButton.Text = "O"
+CircleButton.BackgroundColor3 = Color3.fromRGB(200,200,200)
+CircleButton.TextColor3 = Color3.new(0,0,0)
+CircleButton.ZIndex = 10
+CircleButton.Parent = MainFrame
+local CircleCorner = Instance.new("UICorner")
+CircleCorner.CornerRadius = UDim.new(0,15)
+CircleCorner.Parent = CircleButton
+
+local hidden = false
+CircleButton.MouseButton1Click:Connect(function()
+    hidden = not hidden
+    MainFrame.Visible = not hidden
+end)
+
+-- Toggle Helper
+local function CreateToggle(name, default, yOffset)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1,0,0,30)
+    frame.Position = UDim2.new(0,0,0,yOffset)
+    frame.BackgroundTransparency = 1
+    frame.Parent = MainFrame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.65,0,1,0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.new(1,1,1)
+    label.TextScaled = true
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0.35,0,1,0)
+    button.Position = UDim2.new(0.65,0,0,0)
+    button.Text = default and "ON" or "OFF"
+    button.TextScaled = true
+    button.BackgroundColor3 = default and Color3.fromRGB(0,150,0) or Color3.fromRGB(150,0,0)
+    button.TextColor3 = Color3.new(1,1,1)
+    button.Parent = frame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0,12)
+    corner.Parent = button
+
+    local state = default
+    button.MouseButton1Click:Connect(function()
+        state = not state
+        button.Text = state and "ON" or "OFF"
+        TweenService:Create(button,TweenInfo.new(0.2),{BackgroundColor3 = state and Color3.fromRGB(0,150,0) or Color3.fromRGB(150,0,0)}):Play()
+    end)
+
+    return function() return state end
+end
+
+local ShowESP = CreateToggle("ESP", true, 40)
+local ShowNames = CreateToggle("Name ESP", true, 80)
+
+-- Role detection function (PC: function+backpack, Mobile: backpack only)
+local function getPlayerRole(player)
+    local char = player.Character
+    local role = "Unknown"
+    local hasGun = false
+    if char then
+        for _, item in pairs(char:GetChildren()) do
+            if item:IsA("Tool") and item.Name:match("Gun") then
+                hasGun = true
+                break
+            end
+        end
     end
+    if not hasGun and player.Backpack then
+        for _, item in pairs(player.Backpack:GetChildren()) do
+            if item:IsA("Tool") and item.Name:match("Gun") then
+                hasGun = true
+                break
+            end
+        end
+    end
+
+    if isMobile then
+        role = hasGun and "Sheriff" or "Innocent"
+    else
+        local success, GetCurrentPlayerData = pcall(function()
+            return ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("GetCurrentPlayerData")
+        end)
+        if success then
+            local invokeFunction
+            local s, CurrentRoundClient = pcall(function()
+                return ReplicatedStorage:WaitForChild("Modules"):WaitForChild("CurrentRoundClient")
+            end)
+            if s and CurrentRoundClient then
+                local ok, module = pcall(function()
+                    return require(CurrentRoundClient).GetLatestPlayerData
+                end)
+                invokeFunction = ok and module or function() return nil end
+            else
+                invokeFunction = function()
+                    local success, result = pcall(function() return GetCurrentPlayerData:InvokeServer() end)
+                    if success then return result else return nil end
+                end
+            end
+            local success, data = pcall(invokeFunction)
+            if success and data and data[player.Name] then
+                role = data[player.Name].Role or role
+            end
+        end
+        if hasGun then role = "Sheriff" end
+    end
+
+    if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health <= 0 then
+        role = "Dead"
+    end
+    return role
+end
+
+local function getRoleColor(player)
+    local role = getPlayerRole(player)
+    if role == "Murderer" then return Color3.fromRGB(255,0,0)
+    elseif role == "Sheriff" then return Color3.fromRGB(0,0,255)
+    elseif role == "Innocent" then return Color3.fromRGB(0,255,0)
+    elseif role == "Dead" then return Color3.fromRGB(255,255,255)
+    else return Color3.fromRGB(255,255,255) end
+end
+
+-- ESP Handler
+ValoxESP.Boxes = {}
+ValoxESP.Names = {}
+
+local function createESP(player)
+    if ValoxESP.Boxes[player] then return end
+    local char = player.Character
+    if not char then return end
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ValoxESPHighlight"
+    highlight.Adornee = char
+    highlight.FillColor = getRoleColor(player)
+    highlight.FillTransparency = 0.25
+    highlight.OutlineColor = Color3.new(1,1,1)
+    highlight.OutlineTransparency = 0
+    highlight.Parent = char
+    ValoxESP.Boxes[player] = highlight
+
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    local nameTag = Instance.new("BillboardGui")
+    nameTag.Name = "ValoxESPName"
+    nameTag.Adornee = head
+    nameTag.Size = UDim2.new(0,100,0,30)
+    nameTag.AlwaysOnTop = true
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1,0,1,0)
+    label.BackgroundTransparency = 1
+    label.TextScaled = true
+    label.Text = player.Name
+    label.TextColor3 = getRoleColor(player)
+    label.Parent = nameTag
+    nameTag.Parent = char
+    ValoxESP.Names[player] = label
+end
+
+local function removeESP(player)
+    if ValoxESP.Boxes[player] then
+        ValoxESP.Boxes[player]:Destroy()
+        ValoxESP.Boxes[player] = nil
+    end
+    if ValoxESP.Names[player] then
+        ValoxESP.Names[player].Parent:Destroy()
+        ValoxESP.Names[player] = nil
+    end
+end
+
+local function updateESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            if ShowESP() then
+                createESP(player)
+                if ValoxESP.Boxes[player] then
+                    ValoxESP.Boxes[player].FillColor = getRoleColor(player)
+                end
+            else
+                removeESP(player)
+            end
+            if ShowNames() and ValoxESP.Names[player] then
+                ValoxESP.Names[player].TextColor3 = getRoleColor(player)
+                ValoxESP.Names[player].Parent.Enabled = true
+            elseif ValoxESP.Names[player] then
+                ValoxESP.Names[player].Parent.Enabled = false
+            end
+        end
+    end
+end
+
+-- Kill All Button
+local KillAllButton = Instance.new("TextButton")
+KillAllButton.Size = UDim2.new(1, -10, 0, 40)
+KillAllButton.Position = UDim2.new(0,5,0,220)
+KillAllButton.Text = "Kill All"
+KillAllButton.TextScaled = true
+KillAllButton.BackgroundColor3 = Color3.fromRGB(255,0,0)
+KillAllButton.TextColor3 = Color3.new(1,1,1)
+KillAllButton.Parent = MainFrame
+
+local KillCorner = Instance.new("UICorner")
+KillCorner.CornerRadius = UDim.new(0,12)
+KillCorner.Parent = KillAllButton
+
+KillAllButton.MouseButton1Click:Connect(function()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local knife = char:FindFirstChild("Knife")
+    if not knife then
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if backpack and backpack:FindFirstChild("Knife") then
+            backpack.Knife.Parent = char
+            knife = char:FindFirstChild("Knife")
+        end
+    end
+    if not knife then return end
+
     local startTime = tick()
-    while tick() - startTime <= 3 do
-        local frontCFrame = LocalPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0,0,-1)
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = player.Character.HumanoidRootPart
-                hrp.CanCollide = false
-                hrp.CFrame = frontCFrame
-                local stab = LocalPlayer.Character:FindFirstChild("Knife") and LocalPlayer.Character.Knife:FindFirstChild("Stab")
-                if stab then
-                    local args = {"Slash"}
-                    stab:FireServer(unpack(args))
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > 3 then
+            connection:Disconnect()
+            return
+        end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local targetCFrame = root.CFrame * CFrame.new(0,0,-1)
+            for _, player in pairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                    local humRoot = player.Character.HumanoidRootPart
+                    humRoot.CFrame = targetCFrame
+                    for _, part in pairs(player.Character:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
+                        end
+                    end
                 end
             end
         end
-        task.wait(0.05)
-    end
+        knife:WaitForChild("Stab"):FireServer("Slash")
+    end)
 end)
+
+-- Connections
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        updateESP()
+    end)
+end)
+Players.PlayerRemoving:Connect(function(player)
+    removeESP(player)
+end)
+RunService.Heartbeat:Connect(updateESP)
